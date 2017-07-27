@@ -2,6 +2,10 @@
 using System.Threading.Tasks;
 using NServiceBus;
 using Raven.Client.Document;
+using System.Security.Cryptography;
+using System.Text;
+using Raven.Client.Document.DTC;
+using System.IO;
 
 class Program
 {
@@ -16,17 +20,25 @@ class Program
         using (new RavenHost())
         {
             var endpointConfiguration = new EndpointConfiguration("Samples.RavenDB.Server");
-            var documentStore = new DocumentStore
+
+            var resourceManagerId = DeterministicGuidBuilder("Samples.RavenDB.Server" + Environment.MachineName);
+            var dtcRecoveryBasePath = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+            var recoveryPath = Path.Combine(dtcRecoveryBasePath, "NServiceBus.RavenDB", resourceManagerId.ToString());
+
+            var store = new DocumentStore
             {
-                Url = "http://localhost:32076",
-                DefaultDatabase = "RavenSampleData"
+                ConnectionStringName = "NServiceBus/Persistence/RavenDB",
+                ResourceManagerId = resourceManagerId,
+                TransactionRecoveryStorage = new LocalDirectoryTransactionRecoveryStorage(recoveryPath),
+                DefaultDatabase = "test"
             };
-            documentStore.Initialize();
+
+            store.Initialize();
 
             var persistence = endpointConfiguration.UsePersistence<RavenDBPersistence>();
             // Only required to simplify the sample setup
             persistence.DoNotSetupDatabasePermissions();
-            persistence.SetDefaultDocumentStore(documentStore);
+            persistence.SetDefaultDocumentStore(store);
 
             endpointConfiguration.UseTransport<LearningTransport>();
             endpointConfiguration.UseSerialization<JsonSerializer>();
@@ -40,6 +52,18 @@ class Program
 
             await endpointInstance.Stop()
                 .ConfigureAwait(false);
+        }
+    }
+
+    static Guid DeterministicGuidBuilder(string input)
+    {
+        // use MD5 hash to get a 16-byte hash of the string
+        using (var provider = new MD5CryptoServiceProvider())
+        {
+            var inputBytes = Encoding.UTF8.GetBytes(input);
+            var hashBytes = provider.ComputeHash(inputBytes);
+            // generate a guid from the hash:
+            return new Guid(hashBytes);
         }
     }
 }
